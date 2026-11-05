@@ -1,0 +1,41 @@
+[project]
+name = "simplixity-desktop"
+version = "0.1.0"
+description = "Simplixity as a desktop app: one process, no Docker, no Redis, no SearXNG service"
+requires-python = ">=3.12"
+dependencies = [
+    # Simplixity itself: its [project.dependencies]. `python fetch.py` fails if
+    # the pinned upstream needs one that is missing here.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "redis>=5.2",
+    "aiosqlite>=0.20",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "pypdf>=5",
+    # In-process replacement for the Redis server
+    "fakeredis>=2.26",
+    # Native window: WKWebView on macOS, WebView2 on Windows, Qt WebEngine on Linux
+    "pywebview>=5",
+    "pywebview[qt]>=5; sys_platform == 'linux'",
+    # SearXNG, loaded from ./.searxng (see fetch.py)
+    "certifi", "babel", "flask-babel", "flask", "jinja2", "lxml", "pygments",
+    "python-dateutil", "pyyaml", "curl_cffi", "valkey", "markdown-it-py",
+    "msgspec", "typer", "isodate", "whitenoise", "typing-extensions",
+]
+
+[dependency-groups]
+build = [
+    "pyinstaller>=6.11",
+    "pillow>=11",  # lets PyInstaller turn the PNG icon into .ico on Windows
+]
+
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv]
+package = false

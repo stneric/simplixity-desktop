@@ -1,0 +1,17 @@
+# Fetched by fetch.py at the refs in upstream.toml
+.simplixity/
+.searxng/
+
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+.DS_Store
+
+# Local agent and editor state
+.claude/
+CLAUDE.md
+
+# Local release script
+/publish

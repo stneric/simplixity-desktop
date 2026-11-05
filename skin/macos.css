@@ -1,0 +1,63 @@
+/* Simplixity Desktop skin, macOS only (skin.py adds it after skin.css).
+   Same house rules as skin.css. Selectors used here beyond skin.css's list:
+   .main .lit-app .lit-main .reader-top, and the 760px drawer breakpoint. */
+
+/* ── unified title bar ───────────────────────────────────────────────
+   The page runs up under the title bar (macos.py, setup_window), which is
+   as tall as the 52px topbar and transparent: the topbar is the title bar.
+   The window buttons sit at its left edge, so whatever is drawn there moves
+   out of their way: the sidebar's content when it is open, the topbar's
+   when it is shut. */
+
+:root {
+  /* The buttons end at 73px; a toolbar item keeps about 20px clear of them. */
+  --desktop-lights: 88px;
+  --desktop-titlebar: 52px;
+}
+
+.sidebar,
+.lit-side {
+  padding-top: var(--desktop-titlebar);
+}
+
+.app.collapsed .topbar,
+html.boot-collapsed .topbar,
+.reader-top {
+  padding-left: var(--desktop-lights);
+}
+.app.ready .topbar {
+  transition: padding-left 0.18s ease;
+}
+
+/* Full screen has no window buttons to dodge; skin.js sets the flag. */
+html[data-fullscreen] {
+  --desktop-lights: 12px;
+  --desktop-titlebar: 10px;
+}
+
+/* ── sidebar vibrancy ────────────────────────────────────────────────
+   Behind the page is the native sidebar material (macos.py). The page is
+   made transparent where the sidebar is and stays opaque everywhere else.
+   If any of these stop matching, the sidebar is just opaque again. */
+
+@media (min-width: 761px) {
+  body:has(> .app),
+  body:has(> .lit-app) {
+    background: transparent;
+  }
+  .app > .main,
+  .lit-app > .lit-main {
+    background: var(--bg);
+  }
+  .sidebar,
+  .lit-side {
+    background: transparent;
+    /* Fills on a translucent ground: tints of the text colour rather than
+       the opaque greys meant for --bg-sidebar. */
+    --bg-hover: color-mix(in srgb, var(--fg) 7%, transparent);
+    --bg-active: color-mix(in srgb, var(--fg) 11%, transparent);
+    --bg-input: color-mix(in srgb, var(--fg) 6%, transparent);
+  }
+}
+/* Below 761px the sidebar is a drawer over the page (upstream's breakpoint)
+   and keeps its own opaque background. */

@@ -1,0 +1,127 @@
+/* Simplixity Desktop skin. Loaded after Simplixity's styles.css, only in the
+   app window (skin.py puts it there).
+
+   House rules, so an upstream change cannot break the app:
+   - Override, never restructure. Every rule here must be harmless when its
+     selector stops matching: the worst case is the browser look, not a broken
+     page.
+   - Use upstream's tokens (--bg, --line, ...) rather than copies of their
+     values, so a re-theme upstream carries over by itself.
+   - Selectors used here and in macos.css: .app .collapsed .ready .sidebar
+     .topbar .lit-side .chat-list .project-list html.boot-collapsed #switch-profile
+     #settings-overlay .tabstrip .modal-body #open-settings #refresh-models. Check them when bumping
+     upstream.toml. */
+
+/* ── behaves like an app, not a page ─────────────────────────────── */
+
+html,
+body {
+  /* No rubber-band bounce of the whole window past its edges. */
+  overscroll-behavior: none;
+}
+
+/* Chrome is not text: dragging across the sidebar should not paint a
+   selection. Inputs keep theirs; answers keep theirs (they are not chrome). */
+.sidebar,
+.topbar,
+button,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sidebar input,
+.topbar input,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Native controls point with the arrow; the hand is for links. */
+button,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+summary,
+select {
+  cursor: default;
+}
+
+/* The sidebar lists scroll up and down, never sideways. A row's hidden
+   move-to-project <select> is wider than its 28px slot in WebKit, which
+   otherwise gives the chat list a horizontal scrollbar wherever the system
+   shows scroll bars permanently (a mouse attached). */
+.project-list,
+.chat-list {
+  overflow-x: hidden;
+}
+
+/* Images and icons are not drag sources in an app window. */
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+/* ── API keys (skin.js) ──────────────────────────────────────────────
+   The profile entry goes: the app signs in by itself, silently
+   (desktop_api.py). The keys live in a Settings tab built from upstream's
+   own .tab/.field/.text-input/.hint/.ghost-btn markup, so it looks like
+   the other tabs; only the bits below are the skin's. */
+
+#switch-profile {
+  display: none;
+}
+
+.desktop-key-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.desktop-key-actions a {
+  color: var(--fg-muted);
+}
+.desktop-key-actions .ghost-btn[hidden] {
+  display: none;
+}
+#panel-desktop-keys .text-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Updates (skin.js) ──────────────────────────────────────────── */
+
+.desktop-update-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg, Canvas));
+  color: var(--fg, CanvasText);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+.desktop-update-notice[hidden] {
+  display: none;
+}
+.desktop-update-notice span {
+  flex: 1;
+}
+.desktop-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.desktop-update-error {
+  color: var(--error);
+}

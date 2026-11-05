@@ -1,0 +1,14 @@
+# What the desktop app is built from. fetch.py checks out exactly these refs,
+# so a new commit upstream changes nothing here until a ref is bumped on purpose
+# (and the app has been tried against it).
+#
+# ref: a tag, branch or full commit SHA. Prefer tags or SHAs; a branch name
+# makes the build follow upstream again, which is what the pin is here to stop.
+
+[simplixity]
+repo = "https://github.com/stneric/simplixity.git"
+ref = "v0.2.1"
+
+[searxng]
+repo = "https://github.com/searxng/searxng.git"
+ref = "cccbc9e158b0ac3bb2158e9841a647a5bec57b57"
