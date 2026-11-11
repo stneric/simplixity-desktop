@@ -245,6 +245,49 @@ def start_simplixity(updates, sock: socket.socket):
 
 # --- window ----------------------------------------------------------------
 
+
+def host_env() -> dict[str, str]:
+    """The environment a program outside the bundle should start with.
+
+    PyInstaller points LD_LIBRARY_PATH (and the Qt hooks a few QT_* paths) at
+    the bundle. A browser launcher inherits that and loads the bundle's older
+    libstdc++: KDE's kde-open dies on start, so every link in the app did
+    nothing. Whatever points into the bundle goes; LD_LIBRARY_PATH gets back
+    what it was before the bootloader touched it.
+    """
+    env = dict(os.environ)
+    if not FROZEN:
+        return env
+    bundle = str(BUNDLE)
+    for key in [k for k, v in env.items() if bundle in v]:
+        del env[key]
+    orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig:
+        env["LD_LIBRARY_PATH"] = orig
+    return env
+
+
+def open_external(url: str, *_args, **_kwargs) -> bool:
+    """webbrowser.open, minus the bundle's libraries (see host_env).
+
+    pywebview hands every link that opens a new window (all citations do) to
+    webbrowser.open; on Linux that is replaced by this.
+    """
+    import subprocess
+
+    if not re.match(r"https?://", url):
+        log.warning("not opening %r: only http(s) links leave the app", url)
+        return False
+    try:
+        subprocess.Popen(
+            ["xdg-open", url], env=host_env(), start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except OSError:
+        log.exception("could not open %s", url)
+        return False
+
 WINDOW_STATE = DATA_DIR / "window.json"
 
 
@@ -284,6 +327,11 @@ def save_geometry(window) -> None:
 
 def open_window(url: str) -> None:
     import webview
+
+    if sys.platform.startswith("linux"):
+        import webbrowser
+
+        webbrowser.open = open_external
 
     window = webview.create_window(
         "Simplixity",
