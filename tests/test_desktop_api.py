@@ -108,6 +108,9 @@ def test_failed_install_says_why():
     assert p.status()["progress"]["phase"] == "error" and p.status()["progress"]["error"] == "disk full"
 
 
+# The macOS and Linux commands are built from POSIX paths, which Windows' Path
+# rewrites (C:\Applications\...); there they are checked on those systems only.
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX paths")
 def test_relaunch_waits_for_this_process(monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "platform", "linux")
@@ -117,3 +120,12 @@ def test_relaunch_waits_for_this_process(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(sys, "executable", "/Applications/Simplixity.app/Contents/MacOS/Simplixity")
     assert "open -n /Applications/Simplixity.app" in desktop_api.relaunch_command(1)[2]
+
+
+def test_relaunch_on_windows_waits_for_this_process(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "executable", r"C:\Users\o'neil\AppData\Local\Simplixity\Simplixity.exe")
+    cmd = desktop_api.relaunch_command(4242)
+    assert cmd[0] == "powershell" and "Wait-Process -Id 4242" in cmd[-1]
+    assert r"Start-Process 'C:\Users\o''neil\AppData\Local\Simplixity\Simplixity.exe'" in cmd[-1]
