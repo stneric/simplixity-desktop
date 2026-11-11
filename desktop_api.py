@@ -163,7 +163,7 @@ class LocalModels:
         self.base_url = base_url   # a function: the Ollama address is a setting
         self.cache_file = cache_file
         self.catalog: list[dict] = []
-        self.checked = 0.0
+        self.checked = float("-inf")   # time.monotonic() of the last try; never yet
         self.jobs: dict[str, dict] = {}
         self.tasks: dict[str, Any] = {}
         self.loop_task = None
@@ -218,7 +218,9 @@ class LocalModels:
         import shutil
         import time
 
-        if not self.catalog or time.monotonic() - self.checked > CHECK_EVERY:
+        if time.monotonic() - self.checked > CHECK_EVERY:
+            # Marked before the request: a second status() meanwhile does not ask too.
+            self.checked = time.monotonic()
             try:
                 await self.refresh()
             except Exception:  # noqa: BLE001 - offline: what the last start found
@@ -545,7 +547,9 @@ def wrap(app, upstream, data_dir: Path, updates=None):
 
     env_file = data_dir / ".env"
     state_file = data_dir / "desktop.json"
-    session: dict[str, Any] = {"cookie": None, "tried": False}
+    session: dict[str, Any] = {"cookie": None, "tried": 0}
+    session_lock = asyncio.Lock()
+    sign_in_tries = 3   # then upstream's picker stays, without an error logged per request
     local_models = LocalModels(lambda: settings.ollama_base_url, data_dir / "local-models.json")
     progress = UpdateProgress(updates) if updates is not None else None
     if progress:
@@ -561,35 +565,38 @@ def wrap(app, upstream, data_dir: Path, updates=None):
             log.exception("could not clear the model cache")
 
     async def session_cookie() -> bytes | None:
-        if session["tried"]:
-            return session["cookie"]
-        session["tried"] = True
-        try:
-            from app.api.deps import SESSION_COOKIE
-            from app.store import profiles
-
-            db = upstream.state.db
+        # One sign-in at a time: requests that arrive meanwhile wait for it
+        # instead of going on without a cookie. A failure is tried again.
+        async with session_lock:
+            if session["cookie"] or session["tried"] >= sign_in_tries:
+                return session["cookie"]
+            session["tried"] += 1
             try:
-                name = json.loads(state_file.read_text(encoding="utf-8"))["profile"]
-            except (OSError, ValueError, KeyError):
-                name = None
-            profile = await profiles.get(db, name) if name else None
-            if profile is None:
-                # The profile already there (chats made before carry over),
-                # one without a password first; a fresh install gets "me".
-                existing = await profiles.list_profiles(db)
-                existing.sort(key=lambda p: p["protected"])
-                name = existing[0]["name"] if existing else "me"
-                if not existing:
-                    await profiles.create(db, name)
-                profile = await profiles.get(db, name)
-                state_file.write_text(json.dumps({"profile": name}), encoding="utf-8")
-            token = await profiles.session_token(db, profile)
-            session["cookie"] = f"{SESSION_COOKIE}={token}".encode()
-            log.info("signed in as profile %s", name)
-        except Exception:  # noqa: BLE001 - upstream changed: fall back to its picker
-            log.exception("could not sign in automatically; the profile picker stays")
-        return session["cookie"]
+                from app.api.deps import SESSION_COOKIE
+                from app.store import profiles
+
+                db = upstream.state.db
+                try:
+                    name = json.loads(state_file.read_text(encoding="utf-8"))["profile"]
+                except (OSError, ValueError, KeyError):
+                    name = None
+                profile = await profiles.get(db, name) if name else None
+                if profile is None:
+                    # The profile already there (chats made before carry over),
+                    # one without a password first; a fresh install gets "me".
+                    existing = await profiles.list_profiles(db)
+                    existing.sort(key=lambda p: p["protected"])
+                    name = existing[0]["name"] if existing else "me"
+                    if not existing:
+                        await profiles.create(db, name)
+                    profile = await profiles.get(db, name)
+                    state_file.write_text(json.dumps({"profile": name}), encoding="utf-8")
+                token = await profiles.session_token(db, profile)
+                session["cookie"] = f"{SESSION_COOKIE}={token}".encode()
+                log.info("signed in as profile %s", name)
+            except Exception:  # noqa: BLE001 - upstream changed: fall back to its picker
+                log.exception("could not sign in automatically; the profile picker stays")
+            return session["cookie"]
 
     async def respond(send, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode()

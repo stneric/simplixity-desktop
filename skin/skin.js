@@ -121,8 +121,13 @@
           const save = async (value) => {
             state.textContent = 'Saving…';
             try {
-              render(await put({ [k.env]: value }));
-              document.getElementById(id)?.closest('.field')?.querySelector('.desktop-key-state')?.replaceChildren(value ? 'Saved' : 'Removed');
+              // Only this field changes: the others keep their focus and
+              // whatever is being typed into them.
+              const now = (await put({ [k.env]: value })).keys?.find((x) => x.env === k.env);
+              input.value = '';
+              input.placeholder = now?.set ? `Saved (${now.set}). Type to replace.` : 'Not set';
+              remove.hidden = !now?.set;
+              state.textContent = value ? 'Saved' : 'Removed';
             } catch (e) {
               state.textContent = `Not saved: ${e.message}`;
             }
@@ -224,10 +229,13 @@
       try {
         return await send(`${API}/${action}`, 'POST');
       } catch (e) {
-        return { ...st, error: e.message };
+        return { ...st, error: e.message, errorFrom: action };
       }
     };
-    const install = async () => show(await post('install'));
+    const install = async () => {
+      dismissed.delete('error'); // a new try may say again that it failed
+      show(await post('install'));
+    };
     const check = async () => {
       checking = true;
       show(st);
@@ -299,7 +307,9 @@
         : said
           ? said.text
           : st.error
-            ? `Could not look for updates: ${st.error}`
+            ? st.errorFrom && st.errorFrom !== 'check'
+              ? st.error
+              : `Could not look for updates: ${st.error}`
             : checked
               ? 'This is the newest version.'
               : 'Simplixity looks for updates by itself every few hours.';
@@ -412,7 +422,10 @@
       const id = `model-${m.key}`;
       if (!job?.update || job.quiet) return;
       if (ACTIVE.has(job.state)) {
+        announced.delete(id); // this run's end is said again, also after an earlier one
         toast(id, [el('span', { className: 'desktop-toast-text', textContent: progressText(m, job) }), bar(job.done, job.total)]);
+      } else if (job.state === 'cancelled') {
+        toast(id, null);
       } else if (job.state === 'done' && !announced.has(id)) {
         announced.add(id);
         toast(id, [el('span', { className: 'desktop-toast-text', textContent: `${name(m)} is installed. It is used from the next question on.` })]);
