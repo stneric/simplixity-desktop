@@ -173,81 +173,293 @@
     }, () => panel.replaceChildren(el('p', { className: 'hint', textContent: 'API keys cannot be edited here right now.' })));
   }
 
+  // ── Toasts ────────────────────────────────────────────────────────
+  // Bottom right, newest at the bottom. One per subject (`id`): showing it
+  // again replaces its content, so a download's toast counts up in place.
+  const toasts = el('div', { className: 'desktop-toasts' });
+  toasts.setAttribute('role', 'status');
+  toasts.setAttribute('aria-live', 'polite');
+  document.body.append(toasts);
+  const toast = (id, parts) => {
+    let t = toasts.querySelector(`[data-toast="${id}"]`);
+    if (!parts) return t?.remove();
+    if (!t) {
+      t = el('div', { className: 'desktop-toast' });
+      t.dataset.toast = id;
+      toasts.append(t);
+    }
+    t.replaceChildren(...parts);
+  };
+  const btn = (text, onClick, primary = false) => {
+    const b = el('button', { type: 'button', className: primary ? 'ghost-btn desktop-primary' : 'ghost-btn', textContent: text });
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const mb = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
+  // Without a total the bar has no value at all: it shows that something
+  // moves, not how far. (Setting value to undefined throws.)
+  const bar = (done, total) => el('progress', total ? { max: total, value: Math.min(done || 0, total) } : {});
+
   // ── Updates ───────────────────────────────────────────────────────
-  // The app looks for a newer release by itself (updater.py, at start and
-  // every few hours). When there is one, a notice says so; Install downloads
-  // it, and it is used from the next start. Settings -> Updates shows the
-  // same, with a button to look right now.
+  // The app looks for a newer release by itself (at start and every few
+  // hours). A toast says when there is one. Install downloads it with a
+  // progress bar; once it is in place, Restart now opens the new version.
+  // Settings -> Updates shows the same, and Check now asks right away.
   {
     const API = '/desktop/api/update';
-    const notice = el('div', { className: 'desktop-update-notice', hidden: true });
-    notice.setAttribute('role', 'status');
-    document.body.append(notice);
     const panel = strip && body ? addTab('update', 'Updates').panel : null;
-    let dismissed = false;
+    const dismissed = new Set();
+    let st = {};
+    let checking = false;
+    let checked = false;
+    let restarting = false;
+    let poll = null;
 
-    const install = async () => {
-      render({ busy: true });
+    const get = () => fetch(API, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null), () => null);
+    const refresh = async () => {
+      const next = await get();
+      if (next) show(next);
+    };
+    const post = async (action) => {
       try {
-        render(await send(`${API}/install`, 'POST'));
+        return await send(`${API}/${action}`, 'POST');
       } catch (e) {
-        render({ ...(await get()), error: e.message });
+        return { ...st, error: e.message };
       }
     };
+    const install = async () => show(await post('install'));
     const check = async () => {
-      try {
-        render(await send(`${API}/check`, 'POST'));
-      } catch (e) {
-        render({ ...(await get()), error: e.message });
-      }
+      checking = true;
+      show(st);
+      const next = await post('check');
+      checking = false;
+      checked = true;
+      show(next);
     };
-    const get = () => fetch(API, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : {}), () => ({}));
-    const btn = (text, onClick) => {
-      const b = el('button', { type: 'button', className: 'ghost-btn', textContent: text });
-      b.addEventListener('click', onClick);
-      return b;
+    const restart = async () => {
+      restarting = true;
+      show(st);
+      const res = await post('restart');
+      if (!res.restarting) {
+        restarting = false;
+        show(res);
+      }
     };
 
-    // What to say, for the notice and the tab alike: [text, ...actions].
-    const describe = (st) => {
-      if (st.busy) return ['Installing the update…'];
-      if (st.staged) return [`Version ${st.staged} is installed. Quit and reopen Simplixity to use it.`];
-      const a = st.available;
-      if (a && a.installer_only) {
-        const link = el('a', { href: a.page, target: '_blank', rel: 'noopener', textContent: 'Download' });
-        return [`Version ${a.version} is out. It needs a new download of the app.`, link];
+    // What to say: { key, text, parts }, or null. `parts` makes new elements on
+    // each call: the toast and the tab each need their own.
+    const describe = (s) => {
+      if (restarting) return { key: 'restart', text: 'Restarting Simplixity…' };
+      const p = s.progress;
+      if (s.busy && p) {
+        const what = p.version ? `Simplixity ${p.version}` : 'the update';
+        const text =
+          p.phase === 'downloading'
+            ? `Downloading ${what}: ${mb(p.done)} of ${mb(p.total)}`
+            : p.phase === 'unpacking'
+              ? `Installing ${what}…`
+              : `Starting the download of ${what}…`;
+        return { key: 'busy', text, parts: () => [bar(p.phase === 'downloading' ? p.done : 0, p.phase === 'downloading' ? p.total : 0)] };
       }
-      if (a) return [`Version ${a.version} is available.`, btn('Install', install)];
+      if (p?.phase === 'error') {
+        return { key: `error`, text: `The update did not install: ${p.error}`, parts: () => [btn('Try again', install, true)] };
+      }
+      if (s.staged) {
+        return { key: `staged-${s.staged}`, text: `Simplixity ${s.staged} is ready.`, parts: () => [btn('Restart now', restart, true)] };
+      }
+      const a = s.available;
+      if (a && a.installer_only) {
+        const link = () => el('a', { href: a.page, target: '_blank', rel: 'noopener', textContent: 'Download', className: 'ghost-btn desktop-primary' });
+        return { key: `installer-${a.version}`, text: `Simplixity ${a.version} is available. It needs a new download of the app.`, parts: () => [link()] };
+      }
+      if (a) return { key: `available-${a.version}`, text: `Simplixity ${a.version} is available.`, parts: () => [btn('Install', install, true)] };
       return null;
     };
 
-    function render(st) {
+    function show(next) {
+      st = next || {};
       const said = describe(st);
-      notice.hidden = !said || dismissed;
-      if (said) {
-        const close = btn('Later', () => ((dismissed = true), (notice.hidden = true)));
-        notice.replaceChildren(el('span', { textContent: said[0] }), ...said.slice(1), ...(st.busy ? [] : [close]));
+      // The toast: everything but a finished check that found nothing.
+      if (said && !dismissed.has(said.key)) {
+        const later = said.key === 'busy' || said.key === 'restart' ? [] : [btn('Later', () => (dismissed.add(said.key), toast('update', null)))];
+        toast('update', [el('span', { className: 'desktop-toast-text', textContent: said.text }), ...(said.parts?.() ?? []), ...later]);
+      } else {
+        toast('update', null);
       }
+      // While something moves, ask often; otherwise now and then.
+      clearTimeout(poll);
+      poll = setTimeout(refresh, st.busy ? 500 : 5 * 60 * 1000);
       if (!panel) return;
       if (st.enabled === false) {
         panel.replaceChildren(el('p', { className: 'hint', textContent: 'Updates only work in the installed app.' }));
         return;
       }
+      const line = checking
+        ? 'Looking for a newer version…'
+        : said
+          ? said.text
+          : st.error
+            ? `Could not look for updates: ${st.error}`
+            : checked
+              ? 'This is the newest version.'
+              : 'Simplixity looks for updates by itself every few hours.';
+      const checkBtn = btn(checking ? 'Checking…' : 'Check now', check);
+      checkBtn.disabled = checking || !!st.busy || restarting;
       panel.replaceChildren(
         el('section', { className: 'field' },
           el('div', { className: 'field-head' }, el('label', { textContent: 'Version' })),
           el('p', { className: 'hint', textContent: st.version ?? '' }),
         ),
-        el('p', { className: 'hint', textContent: said ? said[0] : 'This is the newest version.' }),
-        el('div', { className: 'desktop-update-actions' }, ...(said ? said.slice(1) : []), ...(st.busy ? [] : [btn('Check now', check)])),
-        ...(st.error ? [el('p', { className: 'hint desktop-update-error', textContent: st.error })] : []),
+        el('p', { className: 'hint', textContent: line }),
+        el('div', { className: 'desktop-update-actions' }, ...(said?.parts?.() ?? []), checkBtn),
       );
     }
 
     // The first check runs while the window opens; ask again a little later.
+    refresh();
+    setTimeout(refresh, 15000);
+  }
+
+  // ── Simplixity's local models ─────────────────────────────────────
+  // With Ollama on this computer, each Settings picker that has a model of
+  // Simplixity's own (found on Hugging Face by desktop_api.py) gets an offer
+  // below it while Ollama does not have that model yet: Download, then
+  // progress, then "Use it", which picks it in that picker the way a click
+  // would. Models Ollama has are kept at their newest version by the app; a
+  // toast shows such an update while it runs. Ollama installed but not
+  // running: one line under the chat model says so. Not installed: nothing.
+  {
+    const API = '/desktop/api/local-models';
+    const boxes = new Map();
+    const SWITCH = { 'router-model': 'router-on', 'title-model': 'title-on', 'embedding-model': 'embedding-enabled' };
+    const ACTIVE = new Set(['starting', 'downloading', 'creating']);
+    const used = new Set();
+    const announced = new Set();
+    let timer = null;
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const get = () => fetch(API, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null), () => null);
+    const act = (key, verb) =>
+      send(`${API}/${key}/${verb}`, 'POST').then(render, (e) => {
+        boxes.get(key)?.querySelector('.desktop-model-line')?.replaceChildren(`Not started: ${e.message}`);
+      });
+    const name = (m) => (m.version ? `${m.label} ${m.version}` : m.label);
+    const progressText = (m, job) =>
+      job.state === 'creating'
+        ? `Setting up ${name(m)} in Ollama…`
+        : job.state === 'starting'
+          ? `${job.update ? 'Updating' : 'Downloading'} ${name(m)}…`
+          : `${job.update ? 'Updating' : 'Downloading'} ${name(m)}: ${mb(job.done)} of ${mb(job.total)}`;
+
+    // Pick the new model in its picker: the switch beside it on, the
+    // catalogue refreshed, then its row in the Local tab clicked, which
+    // saves it like a choice made by hand. Gives up quietly.
+    const use = async (m) => {
+      const slot = document.getElementById(m.slot);
+      if (!slot) return;
+      const toggle = document.getElementById(SWITCH[m.slot]);
+      if (toggle && !toggle.checked) toggle.click();
+      document.getElementById('refresh-models')?.click();
+      const tag = m.tag.toLowerCase();
+      for (let i = 0; i < 25; i++) {
+        await sleep(400);
+        const trigger = slot.querySelector('.picker-trigger');
+        if (!trigger) continue;
+        if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
+        slot.querySelector('.picker-tab[data-tab="local"]:not([disabled])')?.click();
+        const row = [...slot.querySelectorAll('.picker-row')].find((r) => {
+          const n = r.querySelector('.picker-row-name')?.textContent.toLowerCase() ?? '';
+          return n === tag || n.startsWith(`${tag} (`);
+        });
+        if (row) {
+          row.click();
+          used.add(m.key);
+          return get().then(render);
+        }
+        trigger.click(); // closed again, so the next try opens the reloaded list
+      }
+    };
+
+    // Below the picker.
+    const describe = (m, ollama) => {
+      const job = m.job;
+      if (job?.quiet) return null;
+      if (job && ACTIVE.has(job.state)) {
+        return [
+          el('span', { className: 'desktop-model-line', textContent: progressText(m, job) }),
+          bar(job.done, job.total),
+          btn('Cancel', () => act(m.key, 'cancel')),
+        ];
+      }
+      if (m.installed) {
+        if (job?.state !== 'done' || job.update || used.has(m.key)) return null;
+        return [el('span', { className: 'desktop-model-line', textContent: `${m.label} is ready.` }), btn('Use it', () => use(m), true)];
+      }
+      if (!ollama.running) return null;
+      return [
+        el('span', { className: 'desktop-model-line' }, el('strong', { textContent: m.label }), ` · ${mb(m.size)} · ${m.about}`),
+        btn(job?.state === 'error' ? 'Try again' : 'Download', () => act(m.key, 'install')),
+        el('a', { href: m.page, target: '_blank', rel: 'noopener', textContent: 'About' }),
+        ...(job?.state === 'error'
+          ? [el('p', { className: 'hint desktop-update-error', textContent: `Download failed: ${job.error}` })]
+          : []),
+      ];
+    };
+
+    // Bottom right: an update the app started by itself.
+    const updateToast = (m) => {
+      const job = m.job;
+      const id = `model-${m.key}`;
+      if (!job?.update || job.quiet) return;
+      if (ACTIVE.has(job.state)) {
+        toast(id, [el('span', { className: 'desktop-toast-text', textContent: progressText(m, job) }), bar(job.done, job.total)]);
+      } else if (job.state === 'done' && !announced.has(id)) {
+        announced.add(id);
+        toast(id, [el('span', { className: 'desktop-toast-text', textContent: `${name(m)} is installed. It is used from the next question on.` })]);
+        setTimeout(() => toast(id, null), 8000);
+      } else if (job.state === 'error' && !announced.has(id)) {
+        announced.add(id);
+        toast(id, [
+          el('span', { className: 'desktop-toast-text', textContent: `${m.label} could not be updated: ${job.error}` }),
+          btn('Close', () => toast(id, null)),
+        ]);
+      }
+    };
+
+    function render(st) {
+      if (!st?.models) return;
+      for (const m of st.models) {
+        updateToast(m);
+        const slot = document.getElementById(m.slot);
+        if (!slot) continue;
+        let box = boxes.get(m.key);
+        if (!box) {
+          box = el('div', { className: 'desktop-model-offer', hidden: true });
+          box.setAttribute('role', 'status');
+          slot.after(box);
+          boxes.set(m.key, box);
+        }
+        let said = describe(m, st.ollama);
+        if (!said && !st.ollama.running && st.ollama.installed && m.slot === 'settings-chat-model' && !m.installed) {
+          said = [
+            el('span', {
+              className: 'desktop-model-line',
+              textContent: 'Start Ollama to download Simplixity’s own models, which run on this computer.',
+            }),
+          ];
+        }
+        box.hidden = !said;
+        if (said) box.replaceChildren(...said);
+      }
+      // Every second while something downloads, otherwise once a minute:
+      // the app starts updates by itself, and their toast should show.
+      clearTimeout(timer);
+      const busy = st.models.some((m) => m.job && ACTIVE.has(m.job.state) && !m.job.quiet);
+      timer = setTimeout(() => get().then(render), busy ? 1000 : 60000);
+    }
+
     get().then(render);
-    setTimeout(() => get().then(render), 15000);
-    setInterval(() => get().then(render), 30 * 60 * 1000);
+    document.getElementById('open-settings')?.addEventListener('click', () => get().then(render));
   }
 
   // Leftover from before the skin: an offline shell registered by the browser

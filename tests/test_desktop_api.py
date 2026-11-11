@@ -49,3 +49,71 @@ def test_write_env_is_private(tmp_path):
     env = tmp_path / ".env"
     desktop_api.write_env(env, {"A": "1"})
     assert os.stat(env).st_mode & 0o777 == 0o600
+
+
+
+def _file(path, oid="a" * 64, size=10):
+    return {"type": "file", "path": path, "size": 100, "lfs": {"oid": oid, "size": size}}
+
+
+MANIFEST = {"setting": "title", "label": "Title", "tag": "simplixity-title:0.8b", "quant": "Q4_K_M",
+            "ollama": {"renderer": "qwen3.5", "parser": "qwen3.5", "parameters": {"num_ctx": 8192}, "evil": 1}}
+
+
+def test_newest_version_of_the_quant_is_used():
+    tree = [_file("x-v1-Q4_K_M.gguf", "1" * 64), _file("x-v4-Q4_K_M.gguf", "4" * 64, 541),
+            _file("x-v10-Q8_0.gguf", "8" * 64), _file("README.md"), {"type": "directory", "path": "training"}]
+    m = desktop_api._model_from("stneric/simplixity-title-0.8b-GGUF", MANIFEST, tree)
+    assert (m["file"], m["version"], m["digest"], m["size"]) == ("x-v4-Q4_K_M.gguf", "v4", "sha256:" + "4" * 64, 541)
+    assert m["key"] == "simplixity-title-0.8b" and m["tag"] == "simplixity-title:0.8b"
+    assert m["create"] == {"renderer": "qwen3.5", "parser": "qwen3.5", "parameters": {"num_ctx": 8192}}
+    assert desktop_api.SLOTS[m["setting"]] == "title-model"
+
+
+@pytest.mark.parametrize("manifest", [
+    {**MANIFEST, "setting": "nonsense"},
+    {**MANIFEST, "tag": "no-tag"},
+    {**MANIFEST, "quant": "Q2_K"},   # no file of that quant
+    "not a dict",
+])
+def test_unusable_repos_are_skipped(manifest):
+    assert desktop_api._model_from("r/x", manifest, [_file("x-v1-Q4_K_M.gguf")]) is None
+
+
+class FakeStore:
+    def __init__(self):
+        self.staged = None
+
+    def status(self):
+        return {"available": {"version": "v9"}, "staged": self.staged, "busy": True}
+
+    def install(self):
+        self.staged = "v9"
+
+
+def test_finished_install_is_not_reported_busy():
+    p = desktop_api.UpdateProgress(FakeStore())
+    p.start()
+    p.thread.join(2)
+    st = p.status()
+    assert st["busy"] is False and st["progress"] is None and st["staged"] == "v9"
+
+
+def test_failed_install_says_why():
+    store = FakeStore()
+    store.install = lambda: (_ for _ in ()).throw(RuntimeError("disk full"))
+    p = desktop_api.UpdateProgress(store)
+    p.start()
+    p.thread.join(2)
+    assert p.status()["progress"]["phase"] == "error" and p.status()["progress"]["error"] == "disk full"
+
+
+def test_relaunch_waits_for_this_process(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("APPIMAGE", "/home/u/Apps/Simplixity x.AppImage")
+    cmd = desktop_api.relaunch_command(4242)
+    assert cmd[:2] == ["/bin/sh", "-c"] and "kill -0 4242" in cmd[2] and "'/home/u/Apps/Simplixity x.AppImage'" in cmd[2]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "executable", "/Applications/Simplixity.app/Contents/MacOS/Simplixity")
+    assert "open -n /Applications/Simplixity.app" in desktop_api.relaunch_command(1)[2]

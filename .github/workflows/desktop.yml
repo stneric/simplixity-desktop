@@ -26,12 +26,23 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # `python` is part of the shell's fingerprint (updater.py): installed apps
+      # take in-app updates only from a payload built with the same minor
+      # version. Unpinned, uv took whatever the runner image had, and macOS
+      # went 3.14 -> 3.15 between 0.2.1 and 0.2.2, so every Mac needed a new
+      # .dmg. These are the versions 0.2.2 shipped with. Change one only on
+      # purpose: that platform then needs a new installer once.
       matrix:
         include:
           - os: macos-15        # Apple Silicon (macos-14 retired 2026-11-02)
+            python: "3.15"
           - os: windows-latest
+            python: "3.12"
           - os: ubuntu-22.04    # oldest glibc still on GitHub: the AppImage runs on anything newer
+            python: "3.15"
     runs-on: ${{ matrix.os }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     defaults:
       run:
         shell: bash
