@@ -111,6 +111,8 @@ uv run python build.py
 cross-compile. macOS needs the Xcode command line tools, Windows needs Inno
 Setup 6. The GitHub Actions workflow builds all three.
 
+push to start build for 0.2.2
+
 ## License
 
 AGPL-3.0, like Simplixity and SearXNG.
